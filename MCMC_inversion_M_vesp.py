@@ -1,22 +1,15 @@
-import os
-import gc
 import obspy
-import scipy
 import numpy as np
 from numpy import polyfit, poly1d
 import pandas as pd
-import Vespa_analysis as VpaAly
-import subprocess
 from obspy.taup import taup_create
 from obspy.taup import TauPyModel
-import time
-from func_timeout import func_set_timeout
 import func_timeout
-
-## 直接关闭 SettingWithCopyWarning
-import warnings
-from pandas.errors import SettingWithCopyWarning
-warnings.simplefilter(action="ignore", category=SettingWithCopyWarning)
+from func_timeout import func_set_timeout
+## close SettingWithCopyWarning
+#import warnings
+#from pandas.errors import SettingWithCopyWarning
+#warnings.simplefilter(action="ignore", category=SettingWithCopyWarning)
 
 #Function to draw curved line
 def draw_curve(p1, p2, n=10):
@@ -40,18 +33,26 @@ def interp_line(p1,p2,n):
         _data.append(_x)
     return np.vstack(_data).T
 
+def cal_vespa_arrt(deg_average,s0,t0,deg):
+    """
+    formula: 1/s0 = (deg-deg_average) / (t - t0)
+    """
+    t = s0 * (deg-deg_average) + t0
+    return t
+
+
 def create_models(R_CMB,vp_CMB,vp_oc_ICB,R_ICB,vp_ICB_jump,
                   R_mars= 3389.5,
-                  modelpath="/media/bihx/data/Mars/model/Core_models/Core_models/SKS/GD.nd",
+                  modelpath="/data/GD.nd",
                   mdoutdirs=None,Is_save=True,Is_nd_To_npz=True):
     """
     Inversion:
     model parameters:
-    & R_CMB  : 外核大小
-    & vp_CMB : cmb处的vp
-    & dvp_oc : 外核P波速度的扰动
-    & R_ICB  : 内核大小
-    & vp_ICB_jump : icb处的vp
+    & R_CMB  : outer-core size
+    & vp_CMB : vp at CMB
+    & vp_oc_ICB : vp at the outer-core side at the ICB
+    & R_ICB  : inner-core size
+    & vp_ICB_jump : the P-wave velocity jump at ICB
     """
     from obspy.taup import taup_create
     from obspy.taup import TauPyModel
@@ -100,7 +101,7 @@ def create_models(R_CMB,vp_CMB,vp_oc_ICB,R_ICB,vp_ICB_jump,
     source_file       = open(modelpath,'rb')
     source_file_lines = source_file.readlines()
 
-    new_file    = open(os.path.join(mdoutdirs,new_model),'ab+')
+    new_file    = open(mdoutdirs + new_model,'ab+')
     for i in range(0,ddl_index):
         line = source_file_lines[i]
         new_file.write(line)
@@ -144,7 +145,7 @@ def get_observed_data(phase):
     """
     aligned ~ P
     """
-    excelpath    = "/media/bihx/data/Mars_Four/Figure/VesPa/Observed/result/Phase_Vespa_Sample_Uncertainty.xlsx"
+    excelpath    = "/data/phase_vespa_sample_uncertainty.xlsx"
     phase_info   = pd.read_excel(excelpath,sheet_name="v1")
 
     # vsp_mean = phase_info[phase_info["phase"] == phase]["vsp_mean"].values[0]
@@ -154,17 +155,6 @@ def get_observed_data(phase):
     return vsp_mean,vsp_std
 
 def prior(w):
-    #x[0] = mu, x[1]=sigma (new or current)
-    #returns 1 for all valid values of sigma. Log(1) =0, so it does not affect the summation.
-    #returns 0 for all invalid values of sigma (<=0). Log(0)=-infinity, and Log(negative number) is undefined.
-    #It makes the new sigma infinitely unlikely.
-
-    ## Vp > Vs 
-
-    # if not (1780<w[0]<1810 and 4.9<w[1]<5.0 and 0.0001<w[2]<0.002 and 0.5<w[3]<750.5 and 0.01<w[4]<0.60):
-    #     return 0
-    # else:
-    #     return 1
     if not (1700<w[0]<1900 and 4.6<w[1]<5.5 and 5.0<w[2]<6.5 and 0.5<w[3]<750.5 and 0.01<w[4]<0.60):
         return 0
     else:
@@ -179,49 +169,6 @@ def acceptance(x, x_new):
         # Since we did a log likelihood, we need to exponentiate in order to compare to the random number
         # less likely x_new are less likely to be accepted
         return (accept < (x_new/x))
-    
-
-# def cal_taup(phases,model):
-
-#     deg_average = 29.0
-#     misfit = np.zeros(shape=len(phases))
-#     for j,phase in enumerate(phases):
-#         data,data_std   = get_observed_data(phase=phase)
-
-#         if phase == "PKPPKPr":
-#             ph = "PKPPKP"
-#             phase_list = ["P",ph]
-#             TaupInfo   = model.get_travel_times(source_depth_in_km=33,distance_in_degree=24,phase_list=phase_list)
-#             if len(TaupInfo)<3:
-#                 data_syn  = np.array([np.inf])
-#             else:
-#                 t0   = TaupInfo[-2].time
-#                 s0   = TaupInfo[-2].ray_param_sec_degree
-    
-#                 TaupInfo   = model.get_travel_times(source_depth_in_km=33,distance_in_degree=deg_average,phase_list=["P"])
-#                 data_syn   = VpaAly.cal_vespa_arrt(deg_average=24,s0=-s0,t0=t0,deg=deg_average) - TaupInfo[0].time
-
-#         elif phase == "PKPPKPn":
-#             ph = "PKPPKP"
-#             phase_list = ["P",ph]
-#             TaupInfo   = model.get_travel_times(source_depth_in_km=33,distance_in_degree=deg_average,phase_list=phase_list)
-#             if len(TaupInfo)<2:
-#                 data_syn   = np.array([np.inf])
-#             else:
-#                 data_syn   = TaupInfo[-1].time - TaupInfo[0].time
-
-#         elif phase == "PKiKP" or phase== "PKIKKIKP":
-#             phase_list = ["P",phase]
-#             TaupInfo   = model.get_travel_times(source_depth_in_km=33,distance_in_degree=deg_average,phase_list=phase_list)
-#             if len(TaupInfo)<2:
-#                 continue
-#             else:
-#                 data_syn   = TaupInfo[1].time - TaupInfo[0].time
-
-#         misfit[j] = abs(data - data_syn) / data_std
-#     x_lik = np.exp(-1 * np.mean(misfit))
-    
-#     return x_lik
 
 def cal_taup(phases,model):
 
@@ -259,12 +206,13 @@ def cal_taup(phases,model):
         else:
             t0   = temp[-2].time
             s0   = temp[-2].ray_param_sec_degree
-            syn_d[2] = VpaAly.cal_vespa_arrt(deg_average=20,s0=-s0,t0=t0,deg=deg_average) - TaupInfo[0].time
+            syn_d[2] = cal_vespa_arrt(deg_average=20,s0=-s0,t0=t0,deg=deg_average) - TaupInfo[0].time
 
     misfit = abs(obs_d - syn_d) / obs_d_std
     x_lik  = np.exp(-1 * np.mean(misfit))
     
     return x_lik
+
 
 ### -------------------------- main function ----------------------------------------------
 
@@ -276,12 +224,8 @@ label       = "SKS_GD_m2"
 param_init  = [1600.0, 5.0, 6.0, 50.0, 0.10]
 acceptance_rule     = acceptance
 phases      = ["PKiKP","PKIKKIKP","PKPPKPr","PKPPKPn",]
-mdoutdirs   = "/media/bihx/data/Mars_Four/Figure/mcmc/MCMC_SKS/models_{}/".format(label)
-if not os.path.exists(mdoutdirs):
-    os.makedirs(mdoutdirs)
-resultpath  = "/media/bihx/data/Mars_Four/Figure/mcmc/MCMC_SKS/result/{}/".format(label)
-if not os.path.exists(resultpath):
-    os.makedirs(resultpath)
+mdoutdirs   = "/results/"
+resultpath  = "/results/"
 
 x        = param_init
 accepted = []
@@ -295,10 +239,6 @@ j = 0
 z = 0
 while True:
     x_new  = transition_model(x)
-    # if not (1500<x_new[0]<2300 and 4.5<x_new[1]<6.0 and 0.5<x_new[2]<750.5 and 6.0<x_new[3]<9.0 \
-    #         and x_new[3]> (x_new[1]+0.00062 * (x_new[0] - x_new[2])) ):
-    #     continue
-
     if not (1700<x_new[0]<1900 and 4.6<x_new[1]<5.5 and 5.0<x_new[2]<6.5 and 0.5<x_new[3]<750.5 and 0.01<x_new[4]<0.60 \
         and x_new[2]>x_new[1]):
 
@@ -332,13 +272,13 @@ while True:
         np.save(file=resultpath + "rejected_{}_{}.npy".format(j,label),arr=np.array(rejected))
         np.save(file=resultpath + "accepted_{}_{}.npy".format(j,label),arr=np.array(accepted))
 
-        commd  =  "rm -rf {}*.npz".format(mdoutdirs)
-        P      = subprocess.check_output(commd,shell=True)
+#        commd  =  "rm -rf {}*.npz".format(mdoutdirs)
+#        P      = subprocess.check_output(commd,shell=True)
 
-    if z==1000:
+    if z==2:  ## Please change for yourself!
         np.save(file=resultpath + "rejected_{}_{}.npy".format(z,label),arr=np.array(rejected))
         np.save(file=resultpath + "accepted_{}_{}.npy".format(z,label),arr=np.array(accepted))
 
-        commd  =  "rm -rf {}*.npz".format(mdoutdirs)
-        P      = subprocess.check_output(commd,shell=True)	
+#        commd  =  "rm -rf {}*.npz".format(mdoutdirs)
+#        P      = subprocess.check_output(commd,shell=True)	
         break
